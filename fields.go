@@ -1,5 +1,7 @@
 package ip2location
 
+import "fmt"
+
 type EntryKind uint8
 
 type Entry struct {
@@ -24,146 +26,203 @@ type Entry struct {
 	UsageType          string
 }
 
-type field uint
+type Field int
 
 const (
-	fieldCountry field = iota
-	fieldRegion
-	fieldCity
-	fieldISP
-	fieldLatitude
-	fieldLongitude
-	fieldDomain
-	fieldZipCode
-	fieldTimeZone
-	fieldNetSpeed
-	fieldIDDCode
-	fieldAreaCode
-	fieldWeatherCode
-	fieldWeatherName
-	fieldMCC
-	fieldMNC
-	fieldMobileBrand
-	fieldElevation
-	fieldUsageType
+	_ Field = iota
+	FieldCountry
+	FieldRegion
+	FieldCity
+	FieldISP
+	FieldLatitude
+	FieldLongitude
+	FieldDomain
+	FieldZipCode
+	FieldTimeZone
+	FieldNetSpeed
+	FieldIDDCode
+	FieldAreaCode
+	FieldWeatherCode
+	FieldWeatherName
+	FieldMCC
+	FieldMNC
+	FieldMobileBrand
+	FieldElevation
+	FieldUsageType
 	maxField
 )
 
-var dbFields = map[EntryKind][]field{
-	1: []field{
-		fieldCountry,
+var fieldNames = map[Field]string{
+	FieldCountry:     "Country",
+	FieldRegion:      "Region",
+	FieldCity:        "City",
+	FieldISP:         "ISP",
+	FieldLatitude:    "Latitude",
+	FieldLongitude:   "Longitude",
+	FieldDomain:      "Domain",
+	FieldZipCode:     "ZipCode",
+	FieldTimeZone:    "TimeZone",
+	FieldNetSpeed:    "NetSpeed",
+	FieldIDDCode:     "IDDCode",
+	FieldAreaCode:    "AreaCode",
+	FieldWeatherCode: "WeatherCode",
+	FieldWeatherName: "WeatherName",
+	FieldMCC:         "MCC",
+	FieldMNC:         "MNC",
+	FieldMobileBrand: "MobileBrand",
+	FieldElevation:   "Elevation",
+	FieldUsageType:   "UsageType",
+}
+
+func (f Field) String() string {
+	return fieldNames[f]
+}
+
+var dbFields = map[EntryKind][]Field{
+	1: []Field{
+		FieldCountry,
 	},
-	2: []field{
-		fieldCountry,
-		fieldISP,
+	2: []Field{
+		FieldCountry,
+		FieldISP,
 	},
-	3: []field{
-		fieldCountry, fieldRegion, fieldCity,
+	3: []Field{
+		FieldCountry, FieldRegion, FieldCity,
 	},
-	4: []field{
-		fieldCountry, fieldRegion, fieldCity,
-		fieldISP,
+	4: []Field{
+		FieldCountry, FieldRegion, FieldCity,
+		FieldISP,
 	},
-	5: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude,
+	5: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude,
 	},
-	6: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude,
-		fieldISP,
+	6: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude,
+		FieldISP,
 	},
-	7: []field{fieldCountry, fieldRegion, fieldCity,
-		fieldISP, fieldDomain,
+	7: []Field{FieldCountry, FieldRegion, FieldCity,
+		FieldISP, FieldDomain,
 	},
-	8: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude,
-		fieldISP, fieldDomain,
+	8: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude,
+		FieldISP, FieldDomain,
 	},
-	9: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode,
+	9: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode,
 	},
-	10: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode,
-		fieldISP, fieldDomain,
+	10: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode,
+		FieldISP, FieldDomain,
 	},
-	11: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode, fieldTimeZone,
+	11: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode, FieldTimeZone,
 	},
-	12: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode, fieldTimeZone,
-		fieldISP, fieldDomain,
+	12: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode, FieldTimeZone,
+		FieldISP, FieldDomain,
 	},
-	13: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldTimeZone,
-		fieldNetSpeed,
+	13: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldTimeZone,
+		FieldNetSpeed,
 	},
-	14: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode, fieldTimeZone,
-		fieldISP, fieldDomain,
-		fieldNetSpeed,
+	14: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode, FieldTimeZone,
+		FieldISP, FieldDomain,
+		FieldNetSpeed,
 	},
-	15: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode, fieldTimeZone,
-		fieldIDDCode, fieldAreaCode,
+	15: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode, FieldTimeZone,
+		FieldIDDCode, FieldAreaCode,
 	},
-	16: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode, fieldTimeZone,
-		fieldISP, fieldDomain,
-		fieldNetSpeed,
-		fieldIDDCode, fieldAreaCode,
+	16: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode, FieldTimeZone,
+		FieldISP, FieldDomain,
+		FieldNetSpeed,
+		FieldIDDCode, FieldAreaCode,
 	},
-	17: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldTimeZone,
-		fieldNetSpeed,
-		fieldWeatherCode, fieldWeatherName,
+	17: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldTimeZone,
+		FieldNetSpeed,
+		FieldWeatherCode, FieldWeatherName,
 	},
-	18: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode, fieldTimeZone,
-		fieldISP, fieldDomain,
-		fieldNetSpeed,
-		fieldIDDCode, fieldAreaCode,
-		fieldWeatherCode, fieldWeatherName,
+	18: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode, FieldTimeZone,
+		FieldISP, FieldDomain,
+		FieldNetSpeed,
+		FieldIDDCode, FieldAreaCode,
+		FieldWeatherCode, FieldWeatherName,
 	},
-	19: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude,
-		fieldISP, fieldDomain,
-		fieldIDDCode, fieldMCC, fieldMNC, fieldMobileBrand,
+	19: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude,
+		FieldISP, FieldDomain,
+		FieldIDDCode, FieldMCC, FieldMNC, FieldMobileBrand,
 	},
-	20: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode, fieldTimeZone,
-		fieldISP, fieldDomain,
-		fieldNetSpeed,
-		fieldIDDCode, fieldAreaCode,
-		fieldWeatherCode, fieldWeatherName,
-		fieldMCC, fieldMNC, fieldMobileBrand,
+	20: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode, FieldTimeZone,
+		FieldISP, FieldDomain,
+		FieldNetSpeed,
+		FieldIDDCode, FieldAreaCode,
+		FieldWeatherCode, FieldWeatherName,
+		FieldMCC, FieldMNC, FieldMobileBrand,
 	},
-	21: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode, fieldTimeZone,
-		fieldAreaCode,
-		fieldElevation,
+	21: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode, FieldTimeZone,
+		FieldAreaCode,
+		FieldElevation,
 	},
-	22: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode, fieldTimeZone,
-		fieldISP, fieldDomain,
-		fieldNetSpeed,
-		fieldIDDCode, fieldAreaCode,
-		fieldWeatherCode, fieldWeatherName,
-		fieldMCC, fieldMNC, fieldMobileBrand,
-		fieldElevation,
+	22: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode, FieldTimeZone,
+		FieldISP, FieldDomain,
+		FieldNetSpeed,
+		FieldIDDCode, FieldAreaCode,
+		FieldWeatherCode, FieldWeatherName,
+		FieldMCC, FieldMNC, FieldMobileBrand,
+		FieldElevation,
 	},
-	23: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude,
-		fieldISP, fieldDomain,
-		fieldMCC, fieldMNC, fieldMobileBrand,
-		fieldUsageType,
+	23: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude,
+		FieldISP, FieldDomain,
+		FieldMCC, FieldMNC, FieldMobileBrand,
+		FieldUsageType,
 	},
-	24: []field{
-		fieldCountry, fieldRegion, fieldCity, fieldLatitude, fieldLongitude, fieldZipCode, fieldTimeZone,
-		fieldISP, fieldDomain,
-		fieldNetSpeed,
-		fieldIDDCode, fieldAreaCode,
-		fieldWeatherCode, fieldWeatherName,
-		fieldMCC, fieldMNC, fieldMobileBrand,
-		fieldElevation,
-		fieldUsageType,
+	24: []Field{
+		FieldCountry, FieldRegion, FieldCity, FieldLatitude, FieldLongitude, FieldZipCode, FieldTimeZone,
+		FieldISP, FieldDomain,
+		FieldNetSpeed,
+		FieldIDDCode, FieldAreaCode,
+		FieldWeatherCode, FieldWeatherName,
+		FieldMCC, FieldMNC, FieldMobileBrand,
+		FieldElevation,
+		FieldUsageType,
 	},
+}
+
+type Fields []Field
+
+func (fields Fields) IndexOf(f Field) int {
+	for i, ff := range fields {
+		if ff == f {
+			return i
+		}
+	}
+	return -1
+}
+func (fields Fields) Copy() (cp Fields) {
+	return append(cp, fields...)
+}
+
+func requireFields(k EntryKind, required Fields) (Fields, error) {
+	fields := Fields(dbFields[k])
+	for _, f := range required {
+		if fields.IndexOf(f) == -1 {
+			return nil, fmt.Errorf("Missing field %s", f)
+		}
+	}
+	fields = fields.Copy()
+	for i := range fields {
+		if required.IndexOf(fields[i]) == -1 {
+			fields[i] = 0
+		}
+	}
+	return fields, nil
 }
