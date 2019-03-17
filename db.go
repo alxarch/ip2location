@@ -3,9 +3,9 @@ package ip2location
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"math"
 	"net"
+	"os"
 	"time"
 )
 
@@ -17,11 +17,12 @@ type DB struct {
 }
 
 func Open(path string, fields ...Field) (*DB, error) {
-	data, err := ioutil.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	r := bytes.NewReader(data)
+	// data, err := ioutil.ReadFile(path)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// r := bytes.NewReader(data)
+	r, err := os.Open(path)
 	kind, date, err := readDBMeta(r)
 	if err != nil {
 		return nil, err
@@ -80,6 +81,17 @@ type dbEntries struct {
 	entries []Entry
 }
 
+func (db *dbEntries) next() (e *Entry) {
+	i := len(db.entries)
+	if len(db.entries) < cap(db.entries) {
+		db.entries = db.entries[:len(db.entries)+1]
+	} else {
+		db.entries = append(db.entries, Entry{})
+	}
+	return &db.entries[i]
+
+}
+
 func compareAt(a, b []byte, i int) int {
 	i *= len(a)
 	if 0 <= i && i < len(b) {
@@ -129,7 +141,7 @@ func (db *dbEntryIndex) Lookup(ip net.IP) *Entry {
 }
 
 func (r dbReader) readEntryIndex(v int) (*dbEntryIndex, error) {
-	iter, err := newRowIterator(r, v, r.kind)
+	iter, err := newRowIterator(r.ReaderAt, v, r.kind)
 	if err != nil || iter == nil {
 		return nil, err
 	}
