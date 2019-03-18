@@ -1,7 +1,5 @@
 package ip2location
 
-import "fmt"
-
 type EntryKind uint8
 
 type Entry struct {
@@ -26,11 +24,10 @@ type Entry struct {
 	UsageType          string
 }
 
-type Field int
+type Field uint
 
 const (
-	_ Field = iota
-	FieldCountry
+	FieldCountry Field = 1 << iota
 	FieldRegion
 	FieldCity
 	FieldISP
@@ -211,18 +208,19 @@ func (fields Fields) Copy() (cp Fields) {
 	return append(cp, fields...)
 }
 
-func requireFields(k EntryKind, required Fields) (Fields, error) {
-	fields := Fields(dbFields[k])
-	for _, f := range required {
-		if fields.IndexOf(f) == -1 {
-			return nil, fmt.Errorf("Missing field %s", f)
-		}
+type FieldMask uint
+
+func (fields Fields) Mask() (m FieldMask) {
+	for _, f := range fields {
+		m |= FieldMask(f)
 	}
-	fields = fields.Copy()
-	for i := range fields {
-		if required.IndexOf(fields[i]) == -1 {
-			fields[i] = 0
-		}
-	}
-	return fields, nil
+	return
+}
+
+const (
+	allFields FieldMask = FieldMask(FieldCountry | FieldRegion | FieldCity | FieldLatitude | FieldLongitude | FieldZipCode | FieldTimeZone | FieldISP | FieldDomain | FieldNetSpeed | FieldIDDCode | FieldAreaCode | FieldWeatherCode | FieldWeatherName | FieldMCC | FieldMNC | FieldMobileBrand | FieldElevation | FieldUsageType)
+)
+
+func (m FieldMask) Has(f Field) bool {
+	return Field(m)&f == f
 }

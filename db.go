@@ -2,94 +2,100 @@ package ip2location
 
 import (
 	"bytes"
+	"encoding/binary"
+	"errors"
 	"io"
 	"math"
 	"net"
 	"os"
+	"sync"
 	"time"
 )
 
 type DB struct {
-	kind EntryKind
-	date time.Time
-	v4   *dbEntryIndex
-	v6   *dbEntryIndex
+	r  dbReader
+	v4 dbEntries
+	v6 dbEntries
 }
 
-func Open(path string, fields ...Field) (*DB, error) {
-	// data, err := ioutil.ReadFile(path)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// r := bytes.NewReader(data)
-	r, err := os.Open(path)
-	kind, date, err := readDBMeta(r)
+func Open(path string) (*DB, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	if len(fields) > 0 {
-		fields, err = requireFields(kind, fields)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		fields = dbFields[kind]
-	}
-
-	db := dbReader{
-		ReaderAt: r,
-		kind:     kind,
-		fields:   fields,
-		cache:    make(map[uint32]string),
-	}
-	v4, err := db.readEntryIndex(4)
-	if err != nil {
+	db := new(DB)
+	if err := db.Reset(f); err != nil {
 		return nil, err
 	}
-	v6, err := db.readEntryIndex(6)
-	if err != nil {
-		return nil, err
-	}
-	return &DB{
-		kind: kind,
-		date: date,
-		v4:   v4,
-		v6:   v6,
-	}, nil
+	return db, nil
 }
 
-func (db *DB) Kind() EntryKind {
-	return db.kind
-}
-
-func (db *DB) Date() time.Time {
-	return db.date
-}
-
-func (db *DB) Lookup(ip net.IP) *Entry {
-	switch ip = NormalizeIP(ip); len(ip) {
-	case net.IPv4len:
-		return db.v4.Lookup(ip)
-	case net.IPv6len:
-		return db.v6.Lookup(ip)
+func (db *DB) Close() error {
+	if c, ok := db.r.ReaderAt.(io.Closer); ok {
+		return c.Close()
 	}
 	return nil
 }
 
-type dbEntries struct {
-	ips     []byte
-	entries []Entry
+func (db *DB) Reset(r io.ReaderAt) error {
+	if err := db.r.Reset(r); err != nil {
+		return err
+	}
+	if err := db.readEntries(); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (db *dbEntries) next() (e *Entry) {
-	i := len(db.entries)
-	if len(db.entries) < cap(db.entries) {
-		db.entries = db.entries[:len(db.entries)+1]
-	} else {
-		db.entries = append(db.entries, Entry{})
+func (db *DB) readEntries() error {
+	errc := make(chan error, 2)
+	wg := new(sync.WaitGroup)
+	wg.Add(2)
+	read := func(entries *dbEntries, v int) {
+		defer wg.Done()
+		errc <- db.r.readEntries(entries, v)
 	}
-	return &db.entries[i]
+	go read(&db.v4, 4)
+	go read(&db.v6, 6)
+	wg.Wait()
+	close(errc)
+	for err := range errc {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
+func (db *DB) Kind() EntryKind {
+	return db.r.kind
+}
+
+func (db *DB) Date() time.Time {
+	return db.r.date
+}
+
+func (db *DB) lookup(ip net.IP) []byte {
+	switch ip = NormalizeIP(ip); len(ip) {
+	case net.IPv4len:
+		return db.v4.lookup(ip)
+	case net.IPv6len:
+		return db.v6.lookup(ip)
+	default:
+		return nil
+	}
+}
+func (db *DB) Query(e *Entry, ip net.IP, fields ...Field) error {
+	row := db.lookup(ip)
+	if row == nil {
+		return errors.New("Not found")
+	}
+	mask := Fields(fields).Mask()
+	if mask == 0 {
+		mask = allFields
+	}
+	return db.r.ReadEntry(e, row, mask)
+	return nil
 }
 
 func compareAt(a, b []byte, i int) int {
@@ -103,165 +109,271 @@ func compareAt(a, b []byte, i int) int {
 	return 1
 }
 
-func (db *dbEntries) entry(i int) *Entry {
-	if 0 <= i && i < len(db.entries) {
-		return &db.entries[i]
-	}
-	return nil
-}
-
-func (db *dbEntries) Lookup(ip net.IP) *Entry {
-	lo, hi := 0, len(db.entries)
-	for lo <= hi {
-		mid := (lo + hi) / 2
-		if compareAt(ip, db.ips, mid) < 0 {
-			hi = mid - 1
-		} else if lo = mid + 1; compareAt(ip, db.ips, lo) < 0 {
-			return db.entry(mid)
-		}
-	}
-	return nil
-}
-
-func (db *dbEntries) append(ip net.IP, e *Entry) {
-	db.ips = append(db.ips, ip...)
-	db.entries = append(db.entries, *e)
-}
-
-type dbEntryIndex struct {
-	index [256]dbEntries
-}
-
-func (db *dbEntryIndex) Lookup(ip net.IP) *Entry {
-	if db != nil && len(ip) > 0 {
-		idx, ip := &db.index[ip[0]], ip[1:]
-		return idx.Lookup(ip)
-	}
-	return nil
-}
-
-func (r dbReader) readEntryIndex(v int) (*dbEntryIndex, error) {
-	iter, err := newRowIterator(r.ReaderAt, v, r.kind)
-	if err != nil || iter == nil {
-		return nil, err
-	}
-	db := new(dbEntryIndex)
-	for iter.Next() {
-		row := iter.Row()
-		ip, data := rowIP(row, v)
-		if len(ip) > 0 {
-			k, ip := ip[0], ip[1:]
-			e := Entry{}
-			if err := r.readEntry(&e, data); err != nil {
-				return nil, err
-			}
-			db.index[k].append(ip, &e)
-		}
-	}
-	if err := iter.Err(); err != nil {
-		return nil, err
-	}
-	return db, nil
-}
-
-type dbReader struct {
-	io.ReaderAt
-	kind   EntryKind
-	fields Fields
-	cache  map[uint32]string
-}
-
-func (r *dbReader) readField(e *Entry, f Field, n uint32) (err error) {
-	switch f {
-	case FieldCountry:
-		e.Country, err = r.readString(n)
-	case FieldRegion:
-		e.Region, err = r.readString(n)
-	case FieldCity:
-		e.City, err = r.readString(n)
-	case FieldISP:
-		e.ISP, err = r.readString(n)
-	case FieldLatitude:
-		e.Latitude = math.Float32frombits(n)
-	case FieldLongitude:
-		e.Longitude = math.Float32frombits(n)
-	case FieldDomain:
-		e.Domain, err = r.readString(n)
-	case FieldZipCode:
-		e.ZipCode, err = r.readString(n)
-	case FieldTimeZone:
-		e.TimeZone, err = r.readString(n)
-	case FieldNetSpeed:
-		e.NetSpeed, err = r.readString(n)
-	case FieldIDDCode:
-		e.IDDCode, err = r.readString(n)
-	case FieldAreaCode:
-		e.AreaCode, err = r.readString(n)
-	case FieldWeatherCode:
-		e.WeatherStationCode, err = r.readString(n)
-	case FieldWeatherName:
-		e.WeatherStationName, err = r.readString(n)
-	case FieldMCC:
-		e.MCC, err = r.readString(n)
-	case FieldMNC:
-		e.MCC, err = r.readString(n)
-	case FieldMobileBrand:
-		e.MobileBrand, err = r.readString(n)
-	case FieldElevation:
-		e.Elevation = math.Float32frombits(n)
-	case FieldUsageType:
-		e.UsageType, err = r.readString(n)
-	}
-	return
-
-}
-func (r *dbReader) readEntry(e *Entry, buf []byte) error {
+func (db *dbReader) ReadEntry(e *Entry, buf []byte, fields FieldMask) (err error) {
 	var n uint32
-	for _, f := range r.fields {
+	for _, f := range db.fields {
 		if len(buf) >= 4 {
 			n, buf = u32LE(buf), buf[4:]
-			if err := r.readField(e, f, n); err != nil {
-				return err
+			if fields.Has(f) {
+				switch f {
+				case FieldCountry:
+					e.Country, err = db.ReadValue(f, n)
+				case FieldRegion:
+					e.Region, err = db.ReadValue(f, n)
+				case FieldCity:
+					e.City, err = db.ReadValue(f, n)
+				case FieldISP:
+					e.ISP, err = db.ReadValue(f, n)
+				case FieldLatitude:
+					e.Latitude = math.Float32frombits(n)
+				case FieldLongitude:
+					e.Longitude = math.Float32frombits(n)
+				case FieldDomain:
+					e.Domain, err = db.ReadValue(f, n)
+				case FieldZipCode:
+					e.ZipCode, err = db.ReadValue(f, n)
+				case FieldTimeZone:
+					e.TimeZone, err = db.ReadValue(f, n)
+				case FieldNetSpeed:
+					e.NetSpeed, err = db.ReadValue(f, n)
+				case FieldIDDCode:
+					e.IDDCode, err = db.ReadValue(f, n)
+				case FieldAreaCode:
+					e.AreaCode, err = db.ReadValue(f, n)
+				case FieldWeatherCode:
+					e.WeatherStationCode, err = db.ReadValue(f, n)
+				case FieldWeatherName:
+					e.WeatherStationName, err = db.ReadValue(f, n)
+				case FieldMCC:
+					e.MCC, err = db.ReadValue(f, n)
+				case FieldMNC:
+					e.MCC, err = db.ReadValue(f, n)
+				case FieldMobileBrand:
+					e.MobileBrand, err = db.ReadValue(f, n)
+				case FieldElevation:
+					e.Elevation = math.Float32frombits(n)
+				case FieldUsageType:
+					e.UsageType, err = db.ReadValue(f, n)
+				default:
+					panic("Invalid field")
+				}
+				if err != nil {
+					return
+				}
 			}
 		} else {
 			return io.ErrShortBuffer
 		}
 	}
 	return nil
-
 }
 
-func (r *dbReader) readString(id uint32) (s string, err error) {
-	s, ok := r.cache[id]
+type dbReader struct {
+	io.ReaderAt
+	kind   EntryKind
+	fields []Field
+	date   time.Time
+	mu     sync.RWMutex
+	values map[uint32]string
+}
+
+func (db *dbReader) Reset(r io.ReaderAt) (err error) {
+	kind, date, err := readDBMeta(r)
+	if err != nil {
+		return
+	}
+	*db = dbReader{
+		ReaderAt: r,
+		kind:     kind,
+		fields:   dbFields[kind],
+		date:     date,
+	}
+	return
+}
+
+func (r *dbReader) readEntries(entries *dbEntries, v int) (err error) {
+	var count, offset uint32
+	switch v {
+	case 4:
+		count, offset = 5, 9
+	case 6:
+		count, offset = 13, 17
+	default:
+		err = errors.New("Invalid ip version")
+		return
+	}
+	count, err = readUint32(r, int64(count))
+	if err != nil {
+		return
+	}
+	if count == 0 {
+		*entries = dbEntries{}
+		return
+	}
+	offset, err = readUint32(r, int64(offset))
+	if err != nil {
+		return
+	}
+	size := rowSize(v, r.kind)
+	rows := make([]byte, count*uint32(size))
+	_, err = r.ReadAt(rows, int64(offset)-1)
+	if err != nil {
+		return
+	}
+	for i := 0; i < len(rows); i += size {
+		fixIP(rows[i:], v)
+	}
+	*entries = dbEntries{
+		rows: rows,
+		size: size,
+		n:    int(count),
+	}
+	return nil
+}
+
+func (db *dbReader) Get(id uint32) (s string, ok bool) {
+	db.mu.RLock()
+	s, ok = db.values[id]
+	db.mu.RUnlock()
+	return
+}
+func (db *dbReader) Set(id uint32, s string) {
+	db.mu.Lock()
+	if db.values == nil {
+		db.values = make(map[uint32]string)
+	}
+	db.values[id] = s
+	db.mu.Unlock()
+}
+
+func (db *dbReader) ReadValue(f Field, id uint32) (s string, err error) {
+	s, ok := db.Get(id)
 	if ok {
 		return
 	}
 	pos := int64(id)
-	size, err := readByte(r.ReaderAt, pos)
+	size, err := readByte(db.ReaderAt, pos)
 	if err != nil {
 		return
 	}
 	buf := make([]byte, size)
-	_, err = r.ReadAt(buf[:], pos+1)
+	_, err = db.ReaderAt.ReadAt(buf[:], pos+1)
 	if err != nil {
 		return
 	}
 	s = string(buf)
-	// if r.cache == nil {
-	// 	r.cache = make(map[uint32]string)
-	// }
-	r.cache[id] = s
+	db.Set(id, s)
 	return
 }
 
-const zeroPrefix = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xFF\xFF"
+type dbEntries struct {
+	rows []byte
+	size int
+	n    int
+}
+
+func (db *dbEntries) rowAt(i int) []byte {
+	size := db.size
+
+	i *= size
+	if 0 <= i && i < len(db.rows) {
+		row := db.rows[i:]
+		if 0 <= size && size <= len(row) {
+			return row[:size]
+		}
+	}
+	return nil
+}
+
+func (db *dbEntries) lookup(ip net.IP) []byte {
+	lo, hi := 0, db.n
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		if compareAt(ip, db.rows, mid) < 0 {
+			hi = mid - 1
+		} else if lo = mid + 1; compareAt(ip, db.rows, lo) < 0 {
+			return db.rows[mid*db.size+len(ip) : lo*db.size]
+		}
+	}
+	return nil
+}
+
+func fixIP(ip []byte, v int) {
+	switch v {
+	case 4:
+		if len(ip) >= net.IPv4len {
+			ip[0], ip[1], ip[2], ip[3] = ip[3], ip[2], ip[1], ip[0]
+		}
+	case 6:
+		if len(ip) >= net.IPv6len {
+			ip[0], ip[1], ip[2], ip[3], ip[4], ip[5], ip[6], ip[7], ip[8], ip[9], ip[10], ip[11], ip[12], ip[13], ip[14], ip[15] = ip[15], ip[14], ip[13], ip[12], ip[11], ip[10], ip[9], ip[8], ip[7], ip[6], ip[5], ip[4], ip[3], ip[2], ip[1], ip[0]
+		}
+	}
+	return
+}
 
 func NormalizeIP(ip net.IP) net.IP {
 	if len(ip) == net.IPv4len {
 		return ip
 	}
+	const zeroPrefix = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xFF\xFF"
 	if len(ip) == net.IPv6len && string(ip[:12]) == zeroPrefix {
 		return ip[12:16]
 	}
 	return ip
+}
+
+func rowSize(v int, kind EntryKind) int {
+	fields := dbFields[kind]
+	switch v {
+	case 4:
+		return net.IPv4len + 4*len(fields)
+	case 6:
+		return net.IPv6len + 4*len(fields)
+	default:
+		return 0
+	}
+}
+
+func readUint64(r io.ReaderAt, pos int64) (uint64, error) {
+	buf := [8]byte{}
+	_, err := r.ReadAt(buf[:], pos)
+	if err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint64(buf[:]), nil
+}
+
+func u32LE(b []byte) uint32 {
+	return binary.LittleEndian.Uint32(b)
+}
+
+func readUint32(r io.ReaderAt, pos int64) (uint32, error) {
+	tmp := [4]byte{}
+	_, err := r.ReadAt(tmp[:], pos)
+	if err != nil {
+		return 0, err
+	}
+	return u32LE(tmp[:]), nil
+}
+func readByte(r io.ReaderAt, pos int64) (byte, error) {
+	buf := [1]byte{}
+	_, err := r.ReadAt(buf[:], pos)
+	return buf[0], err
+}
+
+func readDBMeta(r io.ReaderAt) (kind EntryKind, tm time.Time, err error) {
+	buf := [5]byte{}
+	_, err = r.ReadAt(buf[:], 0)
+	if err != nil {
+		return
+	}
+	kind = EntryKind(buf[0])
+	if _, ok := dbFields[kind]; !ok {
+		err = errors.New("Unknown db type")
+		return
+	}
+	tm = time.Date(int(buf[2]), time.Month(buf[3]), int(buf[4]), 0, 0, 0, 0, time.UTC)
+	return
+
 }
