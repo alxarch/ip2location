@@ -2,6 +2,7 @@ package ip2location
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -376,4 +377,19 @@ func readDBMeta(r io.ReaderAt) (kind EntryKind, tm time.Time, err error) {
 	tm = time.Date(int(buf[2]), time.Month(buf[3]), int(buf[4]), 0, 0, 0, 0, time.UTC)
 	return
 
+}
+
+type key int
+
+var dbKey key
+
+func FromContext(ctx context.Context) *DB {
+	if x, ok := ctx.Value(dbKey).(*DB); ok {
+		return x
+	}
+	return nil
+}
+
+func NewContext(ctx context.Context, db *DB) context.Context {
+	return context.WithValue(ctx, dbKey, db)
 }
