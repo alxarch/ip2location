@@ -224,3 +224,19 @@ const (
 func (m FieldMask) Has(f Field) bool {
 	return Field(m)&f == f
 }
+
+const (
+	UsageCDN          = "CDN"
+	UsageCommercial   = "COM"
+	UsageDataCenter   = "DCH"
+	UsageEducation    = "EDU"
+	UsageGoverment    = "GOV"
+	UsageISP          = "ISP"
+	UsageMobile       = "MOB"
+	UsageLibrary      = "LIB"
+	UsageMilitary     = "MIL"
+	UsageOrganization = "ORG"
+	UsageReserved     = "RSV"
+	UsageSearchEngine = "SES"
+	UsageISPMobile    = "ISP/MOB"
+)
