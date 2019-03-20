@@ -2,6 +2,10 @@ package ip2location
 
 type EntryKind uint8
 
+func (k EntryKind) Fields() (fields Fields) {
+	return append(fields, dbFields[k]...)
+}
+
 type Entry struct {
 	Country            string
 	Region             string

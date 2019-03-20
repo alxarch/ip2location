@@ -32,7 +32,8 @@ func Open(path string) (*DB, error) {
 }
 
 func (db *DB) Close() error {
-	if c, ok := db.r.ReaderAt.(io.Closer); ok {
+	r := db.r.ReaderAt
+	if c, ok := r.(io.Closer); ok {
 		return c.Close()
 	}
 	return nil
@@ -99,72 +100,39 @@ func (db *DB) Query(e *Entry, ip net.IP, fields ...Field) error {
 	return nil
 }
 
-func compareAt(a, b []byte, i int) int {
-	i *= len(a)
-	if 0 <= i && i < len(b) {
-		b = b[i:]
-		if len(b) >= len(a) {
-			return bytes.Compare(a, b[:len(a)])
-		}
+func (db *DB) Each(v int, fields Fields, fn func(e *Entry, lo, hi net.IP)) error {
+	e := Entry{}
+	m := fields.Mask()
+	if len(fields) == 0 {
+		m = allFields
 	}
-	return 1
-}
+	var entries *dbEntries
+	var offset int
+	switch v {
+	case 4:
+		entries = &db.v4
+		offset = net.IPv4len
+	case 6:
+		entries = &db.v6
+		offset = net.IPv6len
+	default:
+		return errors.New("Invalid ip version")
+	}
+	if m == 0 {
+		m = allFields
+	}
 
-func (db *dbReader) ReadEntry(e *Entry, buf []byte, fields FieldMask) (err error) {
-	var n uint32
-	for _, f := range db.fields {
-		if len(buf) >= 4 {
-			n, buf = u32LE(buf), buf[4:]
-			if fields.Has(f) {
-				switch f {
-				case FieldCountry:
-					e.Country, err = db.ReadValue(f, n)
-				case FieldRegion:
-					e.Region, err = db.ReadValue(f, n)
-				case FieldCity:
-					e.City, err = db.ReadValue(f, n)
-				case FieldISP:
-					e.ISP, err = db.ReadValue(f, n)
-				case FieldLatitude:
-					e.Latitude = math.Float32frombits(n)
-				case FieldLongitude:
-					e.Longitude = math.Float32frombits(n)
-				case FieldDomain:
-					e.Domain, err = db.ReadValue(f, n)
-				case FieldZipCode:
-					e.ZipCode, err = db.ReadValue(f, n)
-				case FieldTimeZone:
-					e.TimeZone, err = db.ReadValue(f, n)
-				case FieldNetSpeed:
-					e.NetSpeed, err = db.ReadValue(f, n)
-				case FieldIDDCode:
-					e.IDDCode, err = db.ReadValue(f, n)
-				case FieldAreaCode:
-					e.AreaCode, err = db.ReadValue(f, n)
-				case FieldWeatherCode:
-					e.WeatherStationCode, err = db.ReadValue(f, n)
-				case FieldWeatherName:
-					e.WeatherStationName, err = db.ReadValue(f, n)
-				case FieldMCC:
-					e.MCC, err = db.ReadValue(f, n)
-				case FieldMNC:
-					e.MCC, err = db.ReadValue(f, n)
-				case FieldMobileBrand:
-					e.MobileBrand, err = db.ReadValue(f, n)
-				case FieldElevation:
-					e.Elevation = math.Float32frombits(n)
-				case FieldUsageType:
-					e.UsageType, err = db.ReadValue(f, n)
-				default:
-					panic("Invalid field")
-				}
-				if err != nil {
-					return
-				}
-			}
-		} else {
-			return io.ErrShortBuffer
+	for i := 0; i < entries.n; i++ {
+		row := entries.rowAt(i)
+		lo, data := row[:offset], row[offset:]
+		hi := entries.rowAt(i + 1)
+		if len(hi) >= offset {
+			hi = hi[:offset]
 		}
+		if err := db.r.ReadEntry(&e, data, m); err != nil {
+			return err
+		}
+		fn(&e, lo, hi)
 	}
 	return nil
 }
@@ -232,6 +200,65 @@ func (r *dbReader) readEntries(entries *dbEntries, v int) (err error) {
 	return nil
 }
 
+func (db *dbReader) ReadEntry(e *Entry, buf []byte, fields FieldMask) (err error) {
+	var n uint32
+	for _, f := range db.fields {
+		if len(buf) >= 4 {
+			n, buf = u32LE(buf), buf[4:]
+			if fields.Has(f) {
+				switch f {
+				case FieldCountry:
+					e.Country, err = db.ReadValue(f, n)
+				case FieldRegion:
+					e.Region, err = db.ReadValue(f, n)
+				case FieldCity:
+					e.City, err = db.ReadValue(f, n)
+				case FieldISP:
+					e.ISP, err = db.ReadValue(f, n)
+				case FieldLatitude:
+					e.Latitude = math.Float32frombits(n)
+				case FieldLongitude:
+					e.Longitude = math.Float32frombits(n)
+				case FieldDomain:
+					e.Domain, err = db.ReadValue(f, n)
+				case FieldZipCode:
+					e.ZipCode, err = db.ReadValue(f, n)
+				case FieldTimeZone:
+					e.TimeZone, err = db.ReadValue(f, n)
+				case FieldNetSpeed:
+					e.NetSpeed, err = db.ReadValue(f, n)
+				case FieldIDDCode:
+					e.IDDCode, err = db.ReadValue(f, n)
+				case FieldAreaCode:
+					e.AreaCode, err = db.ReadValue(f, n)
+				case FieldWeatherCode:
+					e.WeatherStationCode, err = db.ReadValue(f, n)
+				case FieldWeatherName:
+					e.WeatherStationName, err = db.ReadValue(f, n)
+				case FieldMCC:
+					e.MCC, err = db.ReadValue(f, n)
+				case FieldMNC:
+					e.MCC, err = db.ReadValue(f, n)
+				case FieldMobileBrand:
+					e.MobileBrand, err = db.ReadValue(f, n)
+				case FieldElevation:
+					e.Elevation = math.Float32frombits(n)
+				case FieldUsageType:
+					e.UsageType, err = db.ReadValue(f, n)
+				default:
+					panic("Invalid field")
+				}
+				if err != nil {
+					return
+				}
+			}
+		} else {
+			return io.ErrShortBuffer
+		}
+	}
+	return nil
+}
+
 func (db *dbReader) Get(id uint32) (s string, ok bool) {
 	db.mu.RLock()
 	s, ok = db.values[id]
@@ -284,6 +311,17 @@ func (db *dbEntries) rowAt(i int) []byte {
 		}
 	}
 	return nil
+}
+
+func compareAt(a, b []byte, i int) int {
+	i *= len(a)
+	if 0 <= i && i < len(b) {
+		b = b[i:]
+		if len(b) >= len(a) {
+			return bytes.Compare(a, b[:len(a)])
+		}
+	}
+	return 1
 }
 
 func (db *dbEntries) lookup(ip net.IP) []byte {
