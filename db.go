@@ -314,7 +314,6 @@ func (db *dbEntries) rowAt(i int) []byte {
 }
 
 func compareAt(a, b []byte, i int) int {
-	i *= len(a)
 	if 0 <= i && i < len(b) {
 		b = b[i:]
 		if len(b) >= len(a) {
@@ -325,13 +324,13 @@ func compareAt(a, b []byte, i int) int {
 }
 
 func (db *dbEntries) lookup(ip net.IP) []byte {
-	lo, hi := 0, db.n
+	lo, hi, size := 0, db.n, db.size
 	for lo <= hi {
 		mid := (lo + hi) / 2
-		if compareAt(ip, db.rows, mid) < 0 {
+		if compareAt(ip, db.rows, mid*size) < 0 {
 			hi = mid - 1
-		} else if lo = mid + 1; compareAt(ip, db.rows, lo) < 0 {
-			return db.rows[mid*db.size+len(ip) : lo*db.size]
+		} else if lo = mid + 1; compareAt(ip, db.rows, lo*size) < 0 {
+			return db.rows[mid*size+len(ip) : lo*size]
 		}
 	}
 	return nil
