@@ -412,7 +412,7 @@ func readDBMeta(r io.ReaderAt) (kind EntryKind, tm time.Time, err error) {
 		err = errors.New("Unknown db type")
 		return
 	}
-	tm = time.Date(int(buf[2]), time.Month(buf[3]), int(buf[4]), 0, 0, 0, 0, time.UTC)
+	tm = time.Date(2000+int(buf[2]), time.Month(buf[3]), int(buf[4]), 0, 0, 0, 0, time.UTC)
 	return
 
 }
